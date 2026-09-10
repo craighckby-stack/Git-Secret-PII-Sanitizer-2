@@ -20,7 +20,7 @@ A developer-first security scanner, PII detector, Git commit history purge gener
 - **Git Commit History Purge Generator:** Generates automated shell scripts using `git-filter-repo --replace-text` to rewrite Git commit history across all branches and tags, permanently excising exposed secrets.
 - **AI Code Evolution Architect (Google Gemini):** Leverages Google Gemini with reasoning thinking capabilities to analyze threat vectors, calculate organizational blast radius, review compliance obligations (GDPR, PCI-DSS, SOC 2, HIPAA), and generate clean, environment-variable-backed code refactorings.
 - **Enterprise Reporting & SARIF Export:** Export scan results to SARIF v2.1.0 (directly uploadable to GitHub Code Scanning Alerts), structured JSON, or CSV.
-- **Internationalization:** Native translation support covering 70+ languages powered by `xnx3/translate`.
+- **Internationalization:** Native translation support covering 70+ languages powered by [translate.js](https://github.com/xnx3/translate) (`i18n-jsautotranslate`) created by [管雷鸣 (LeiMing Guan / xnx3)](https://github.com/xnx3).
 
 ---
 
@@ -160,6 +160,16 @@ A developer-first security scanner, PII detector, Git commit history purge gener
 1. **Never commit real credentials:** Treat every detection as potentially compromised. If a key is flagged, rotate it immediately with the issuing provider before purging history.
 2. **Git Purge Caution:** Running `git-filter-repo` rewrites commit hashes. Always create a bare clone backup (`git clone --mirror <url>`) before executing history purge scripts.
 3. **API Key Isolation:** The Gemini API key is configured strictly server-side in `server.ts` and is never exposed to client browsers.
+
+---
+
+## 🙏 Acknowledgements & Attribution
+
+Special thanks to the open-source projects and creators that power this application:
+
+- **[translate.js (`i18n-jsautotranslate`)](https://github.com/xnx3/translate)**: Automated client-side multilingual translation engine created and maintained by **[管雷鸣 (LeiMing Guan / xnx3)](https://github.com/xnx3)** (Official Documentation & Website: [translate.zvo.cn](https://translate.zvo.cn)). Licensed under the MIT License.
+- **[CodeMirror](https://codemirror.net/)**: Extensible next-generation in-browser code editor created by Marijn Haverbeke.
+- **[Lucide Icons](https://lucide.dev/)**: Beautiful & consistent open-source icon set.
 
 ---
 
