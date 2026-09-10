@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "name": "Git Secret and PII Sanitizer - Code Evolution Engine",
+  "version": "4.9.1",
+  "description": "Automated secret scanner, PII detector, Git history purge generator, SARIF exporter, and AI Code Evolution Architect powered by Gemini high-thinking.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ],
+  "configuration": {
+    "strictTypeSafety": true,
+    "memoryOptimization": true,
+    "errorHandlingLevel": "comprehensive",
+    "validationEngineVersion": "2.0.0"
+  }
+}

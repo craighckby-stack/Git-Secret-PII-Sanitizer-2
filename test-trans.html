@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Test Translate</title>
+</head>
+<body>
+    <div>Hello world, how are you?</div>
+    <script src="https://cdn.staticfile.net/translate.js/3.18.66/translate.js"></script>
+    <script>
+        translate.service.use('client.edge');
+        translate.language.setLocal('english');
+        translate.execute();
+        setTimeout(() => {
+            translate.changeLanguage('english');
+        }, 1000);
+    </script>
+</body>
+</html>

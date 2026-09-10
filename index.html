@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="description" content="Neural client interface powered by EMG Core" />
+    <meta name="theme-color" content="#020617" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <title>EMG Core Neural Interface</title>
+
+    <!-- Resource Hints for Fonts and Bundles -->
+    <link rel="dns-prefetch" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
+    <link rel="modulepreload" href="/src/main.tsx" />
+
+    <!-- Favicon and Vector Assets -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+
+    <!-- Inline CSS for Critical Rendering Path -->
+    <style>
+      @keyframes emg-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+    </style>
+  </head>
+  <body class="bg-slate-950 text-slate-100 antialiased selection:bg-indigo-500 selection:text-white min-h-screen">
+    <!-- Main Application Mounting Container -->
+    <div id="root" role="main">
+      <!-- Initial Loading State Interface -->
+      <div id="initial-loader" style="display: flex; justify-content: center; align-items: center; min-height: 100vh; background-color: #020617; color: #94a3b8; font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+        <div style="text-align: center;">
+          <div style="width: 32px; height: 32px; border: 3px solid #1e293b; border-top-color: #6366f1; border-radius: 50%; animation: emg-spin 1s linear infinite; margin: 0 auto 16px;"></div>
+          <p style="font-size: 0.875rem; letter-spacing: 0.05em; text-transform: uppercase;">Initializing Neural Interface...</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- JavaScript Disabled Fallback View -->
+    <noscript>
+      <div style="position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background-color: #020617; color: #f87171; font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; text-align: center; padding: 2rem; z-index: 9999;">
+        <div>
+          <h1 style="font-size: 1.5rem; font-weight: 700; margin-bottom: 0.5rem; color: #f87171;">JavaScript Required</h1>
+          <p style="color: #94a3b8; max-width: 28rem;">This application requires JavaScript execution to be enabled in your browser settings.</p>
+        </div>
+      </div>
+    </noscript>
+
+    <!-- Resource and Runtime Fault Monitoring -->
+    <script>
+      (function() {
+        'use strict';
+        window.addEventListener('error', function(event) {
+          if (event.target && (event.target.tagName === 'SCRIPT' || event.target.tagName === 'LINK')) {
+            var url = event.target.src || event.target.href || 'unknown';
+            console.warn('[EMG Core Asset Load Warning]:', url);
+          }
+        }, true);
+
+        window.addEventListener('unhandledrejection', function(event) {
+          if (event.reason) {
+            console.warn('[EMG Core Caught Promise Rejection]:', event.reason);
+          }
+          event.preventDefault();
+        });
+      })();
+    </script>
+
+    <!-- Application Entrypoint Module -->
+    <script type="module" src="/src/main.tsx" crossorigin="anonymous"></script>
+  </body>
+</html>
