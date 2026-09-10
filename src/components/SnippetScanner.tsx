@@ -46,7 +46,7 @@ export const SnippetScanner: React.FC<SnippetScannerProps> = ({ onAnalyzeAi }) =
 
   const { sanitizedContent, findings } = useMemo(() => {
     try {
-      return sanitizeContent(inputCode, 'snippet.js');
+      return sanitizeContent(inputCode, 'snippet.js', undefined, { skipDummyExamples: false });
     } catch (error) {
       console.error('[SnippetScanner] Sanitization failed:', error);
       return { sanitizedContent: inputCode, findings: [] as Finding[] };
@@ -116,7 +116,7 @@ export const SnippetScanner: React.FC<SnippetScannerProps> = ({ onAnalyzeAi }) =
             value={inputCode}
             readOnly={false}
             onChange={handleCodeChange}
-            minHeight="340px"
+            minHeight={typeof window !== 'undefined' && window.innerWidth < 640 ? '200px' : '340px'}
           />
         </div>
 
@@ -139,7 +139,7 @@ export const SnippetScanner: React.FC<SnippetScannerProps> = ({ onAnalyzeAi }) =
           <CodeMirrorViewer
             value={sanitizedContent}
             readOnly={true}
-            minHeight="340px"
+            minHeight={typeof window !== 'undefined' && window.innerWidth < 640 ? '200px' : '340px'}
           />
         </div>
       </div>

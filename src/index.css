@@ -49,6 +49,13 @@
     overflow-x: hidden;
     touch-action: manipulation;
     -webkit-tap-highlight-color: transparent;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  /* Mobile virtual keyboard scroll margins ensuring inputs stay visible above keyboard */
+  input, textarea, select, [contenteditable="true"], .cm-editor {
+    scroll-margin-top: 5rem;
+    scroll-margin-bottom: 8rem;
   }
 
   ::selection {

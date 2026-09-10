@@ -304,6 +304,7 @@ export const AiEvolutionArchitect: React.FC<AiEvolutionArchitectProps> = ({
                 type="text"
                 value={inputQuestion}
                 onChange={(e) => setInputQuestion(e.target.value)}
+                onFocus={(e) => setTimeout(() => e.target.scrollIntoView({ behavior: 'smooth', block: 'center' }), 150)}
                 onKeyDown={(e) => e.key === 'Enter' && handleSendChat()}
                 placeholder="Ask follow-up questions e.g. How do I configure AWS Secrets Manager?"
                 className="flex-1 px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-lg text-slate-200 focus:outline-none focus:border-indigo-500"

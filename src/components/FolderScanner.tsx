@@ -24,6 +24,7 @@ export const FolderScanner: FC<FolderScannerProps> = ({ onScanComplete, onAnalyz
   const [progress, setProgress] = useState<ScanProgress>({ current: 0, total: 0, currentFile: '' });
   const [findings, setFindings] = useState<Finding[]>([]);
   const [stats, setStats] = useState<ScanStats | null>(null);
+  const [filterMockFixtures, setFilterMockFixtures] = useState<boolean>(true);
 
   const terminateScan = () => {
     isAbortedRef.current = true;
@@ -83,7 +84,9 @@ export const FolderScanner: FC<FolderScannerProps> = ({ onScanComplete, onAnalyz
           continue;
         }
 
-        const { findings: fileFindings } = sanitizeContent(text, relativePath);
+        const { findings: fileFindings } = sanitizeContent(text, relativePath, undefined, {
+          skipDummyExamples: filterMockFixtures,
+        });
         if (fileFindings.length > 0) {
           localFindings.push(...fileFindings);
         }
@@ -141,7 +144,7 @@ export const FolderScanner: FC<FolderScannerProps> = ({ onScanComplete, onAnalyz
           className="hidden"
         />
 
-        <div className="flex items-center justify-center gap-3">
+        <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
           {isScanning ? (
             <button
               onClick={terminateScan}
@@ -160,6 +163,16 @@ export const FolderScanner: FC<FolderScannerProps> = ({ onScanComplete, onAnalyz
               Select Local Folder to Scan
             </button>
           )}
+
+          <label className="flex items-center gap-2 text-xs text-slate-400 hover:text-slate-300 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={filterMockFixtures}
+              onChange={(e) => setFilterMockFixtures(e.target.checked)}
+              className="rounded bg-slate-950 border-slate-700 text-indigo-600 focus:ring-0 focus:ring-offset-0 cursor-pointer"
+            />
+            <span>Filter Documentation &amp; Test Fixtures</span>
+          </label>
         </div>
       </div>
 

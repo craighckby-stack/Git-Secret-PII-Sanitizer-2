@@ -52,6 +52,7 @@ export interface Finding {
   readonly confidence: Confidence;
   readonly severity: Severity;
   readonly timestamp: string;
+  readonly isMockOrExample?: boolean;
 }
 
 export interface FileScanResult {
@@ -59,6 +60,15 @@ export interface FileScanResult {
   readonly fileSize: number;
   readonly status: FileScanStatus;
   readonly findingsCount: number;
+}
+
+export interface FileScanAuditItem {
+  readonly path: string;
+  readonly size: number;
+  readonly linesCount: number;
+  readonly findingsCount: number;
+  readonly status: 'clean' | 'flagged' | 'skipped_binary' | 'skipped_large' | 'skipped_ignored';
+  readonly skipReason?: string;
 }
 
 export interface SkipBreakdown {
@@ -75,6 +85,9 @@ export interface ScanStats {
   readonly durationSeconds: number;
   readonly findingsBySeverity: Readonly<Record<Severity, number>>;
   readonly findingsByCategory: Readonly<Record<string, number>>;
+  readonly totalLinesScanned?: number;
+  readonly totalBytesScanned?: number;
+  readonly auditedFiles?: ReadonlyArray<FileScanAuditItem>;
 }
 
 export interface RepoBranch {

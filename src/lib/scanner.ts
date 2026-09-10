@@ -1,4 +1,4 @@
-import { Finding, SecretPattern, Severity, Confidence, ScanStats, SkipBreakdown } from '../types';
+import { Finding, SecretPattern, Severity, Confidence, ScanStats, SkipBreakdown, FileScanAuditItem } from '../types';
 
 /**
  * Validates a credit card number using the Luhn Algorithm.
@@ -160,7 +160,7 @@ export const SENSITIVE_PATTERNS: SecretPattern[] = [
     id: 'gcp-service-account',
     name: 'GCP Service Account Private Key',
     category: 'Cloud Keys',
-    regex: /"type"\s*:\s*"service_account"\s*,\s*"project_id"\s*:\s*"[^"]+"/g,
+    regex: /"type"\s*:\s*"service_account"\s*,\s*"project_id"\s*:\s*"[a-z0-9-]{4,30}"/g,
     placeholder: '"type": "service_account", "project_id": "<GCP_PROJECT_REDACTED>"',
     defaultConfidence: 'High',
     severity: 'Critical',
@@ -379,6 +379,132 @@ export const SENSITIVE_PATTERNS: SecretPattern[] = [
 ];
 
 /**
+ * Checks if an IP address is a benign, non-routable, loopback, broadcast, or documentation address.
+ * RFC 5735 / RFC 5737 / RFC 1122
+ */
+export function isBenignIpAddress(ip: string): boolean {
+  if (!ip) return false;
+  // Wildcards, loopbacks, broadcast
+  if (ip === '0.0.0.0' || ip === '127.0.0.1' || ip === '255.255.255.255') return true;
+  // 0.0.0.0/8 (current network) and 127.0.0.0/8 (loopback block)
+  if (ip.startsWith('0.') || ip.startsWith('127.')) return true;
+  // RFC 5737 Documentation ranges: TEST-NET-1 (192.0.2.x), TEST-NET-2 (198.51.100.x), TEST-NET-3 (203.0.113.x)
+  if (ip.startsWith('192.0.2.') || ip.startsWith('198.51.100.') || ip.startsWith('203.0.113.')) return true;
+  // Common subnet broadcast or network identifiers
+  if (ip.endsWith('.255') || ip.endsWith('.0')) return true;
+  return false;
+}
+
+/**
+ * Checks if matched text is already redacted or part of a scanner rule/type definition.
+ */
+export function isAlreadyRedactedOrPlaceholder(matchedText: string, contextLine: string = ''): boolean {
+  if (!matchedText) return false;
+  // Already contains a redaction placeholder marker
+  if (/<[A-Z0-9_-]+_REDACTED>/i.test(matchedText) || /\[REDACTED[A-Z0-9_ -]*\]/i.test(matchedText)) {
+    return true;
+  }
+  // Line is defining a regex, placeholder, patternId or test fixture in code
+  if (contextLine) {
+    if (/\b(?:placeholder|regex|patternId|defaultConfidence)\s*:\s*['"`/]/.test(contextLine)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Detects standard public documentation dummy keys, sample credentials, or movie fixtures.
+ */
+export function isDocumentationOrDummySecret(
+  matchedText: string,
+  patternId: string,
+  contextLine: string = ''
+): boolean {
+  if (!matchedText) return false;
+  const upper = matchedText.toUpperCase();
+  const lineUpper = contextLine.toUpperCase();
+
+  // Explicit documentation dummies across all providers
+  if (
+    upper.includes('EXAMPLEKEY') ||
+    upper.includes('AKIAIOSFODNN7EXAMPLE') ||
+    upper.includes('YOUR_API_KEY') ||
+    upper.includes('YOUR_KEY') ||
+    upper.includes('INSERT_API_KEY') ||
+    upper.includes('INSERT_KEY') ||
+    upper.includes('MY_SECRET_KEY') ||
+    upper.includes('DUMMY_KEY') ||
+    upper.includes('REPLACE_ME') ||
+    upper.includes('CHANGEME') ||
+    upper.includes('SAMPLE_TOKEN') ||
+    upper.includes('FAKE_SECRET') ||
+    upper.includes('000000000000') ||
+    upper.includes('XXXXXXXXXXXX')
+  ) {
+    return true;
+  }
+
+  // AWS Secret Access Key: official AWS docs example key
+  if (patternId === 'aws-secret-access-key' && upper.includes('EXAMPLEKEY')) {
+    return true;
+  }
+
+  // Database URIs: dummy demo passwords or sample hosts
+  if (patternId === 'mongodb-atlas-uri' || patternId === 'postgres-mysql-redis-uri') {
+    if (
+      /:password@/i.test(matchedText) ||
+      /:admin@/i.test(matchedText) ||
+      /:root@/i.test(matchedText) ||
+      /:changeme@/i.test(matchedText) ||
+      /:test@/i.test(matchedText) ||
+      /:P@ssw0rd/i.test(matchedText) ||
+      (matchedText.includes('cluster0.mongodb.net') && /admin:P@ssw0rd/i.test(matchedText))
+    ) {
+      return true;
+    }
+  }
+
+  // PII Email: Fictional / Reserved test domains (RFC 2606)
+  if (patternId === 'pii-email') {
+    const lower = matchedText.toLowerCase();
+    const fictionalDomains = [
+      '@example.com',
+      '@example.org',
+      '@example.net',
+      '@test.com',
+      '@localhost',
+      '@domain.com',
+      '@company.com',
+      '@cyberdyne.org',
+      '@sample.org',
+      '@yourdomain.com',
+    ];
+    if (fictionalDomains.some(d => lower.endsWith(d))) {
+      return true;
+    }
+  }
+
+  // PII Phone: Fictional exchange (555 telephone exchange reserved for entertainment/fiction)
+  if (patternId === 'pii-phone') {
+    if (/\b555[-.\s]?\d{4}\b/.test(matchedText) || /\(555\)/.test(matchedText) || /[-.\s]555[-.\s]/.test(matchedText)) {
+      return true;
+    }
+  }
+
+  // If the line is clearly labelled as a sample, mock, or test snippet
+  if (
+    lineUpper.includes('SAMPLE_SNIPPETS') ||
+    lineUpper.includes('MOCK_CREDENTIAL') ||
+    lineUpper.includes('DUMMY_DATA')
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
  * Checks if a relative file path should be skipped during scanning.
  */
 export function isIgnoredPath(filePath: string): boolean {
@@ -392,12 +518,20 @@ export function isIgnoredPath(filePath: string): boolean {
     'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml',
     'composer.lock', 'go.sum', 'Cargo.lock'
   ];
+  const binaryExtensions = [
+    '.png', '.jpg', '.jpeg', '.gif', '.ico', '.svg', '.webp',
+    '.woff', '.woff2', '.ttf', '.eot', '.otf',
+    '.zip', '.tar', '.gz', '.pdf', '.mp3', '.mp4'
+  ];
 
   for (let i = 0; i < ignoredDirs.length; i++) {
     if (normalized.includes(ignoredDirs[i])) return true;
   }
   for (let j = 0; j < ignoredFiles.length; j++) {
     if (normalized.endsWith(ignoredFiles[j])) return true;
+  }
+  for (let k = 0; k < binaryExtensions.length; k++) {
+    if (normalized.endsWith(binaryExtensions[k])) return true;
   }
   return false;
 }
@@ -415,13 +549,18 @@ export function isBinaryContent(content: string): boolean {
   return false;
 }
 
+export interface SanitizeOptions {
+  skipDummyExamples?: boolean;
+}
+
 /**
  * Scans content for secrets and PII, returning findings and the sanitized content.
  */
 export function sanitizeContent(
   content: string,
   filePath: string = 'snippet.txt',
-  repoName?: string
+  repoName?: string,
+  options?: SanitizeOptions
 ): { sanitizedContent: string; findings: Finding[] } {
   if (!content) {
     return { sanitizedContent: content || '', findings: [] };
@@ -438,6 +577,10 @@ export function sanitizeContent(
 
     while ((match = regex.exec(content)) !== null) {
       const matchedText = match[0];
+      const matchIndex = match.index;
+      const preMatchContent = content.slice(0, matchIndex);
+      const lineNumber = preMatchContent.split(/\r?\n/).length;
+      const currentLine = lines[lineNumber - 1] || '';
 
       // Special check for Credit Card Luhn validation
       if (pattern.id === 'pii-credit-card' || /^\d{13,19}$/.test(matchedText.replace(/\D/g, ''))) {
@@ -446,10 +589,21 @@ export function sanitizeContent(
         }
       }
 
-      const matchIndex = match.index;
-      // Calculate line number
-      const preMatchContent = content.slice(0, matchIndex);
-      const lineNumber = preMatchContent.split(/\r?\n/).length;
+      // Check for benign IP address (0.0.0.0, 127.0.0.1, documentation IPs)
+      if (pattern.id === 'pii-ipv4-v6' && isBenignIpAddress(matchedText)) {
+        continue;
+      }
+
+      // Check if already redacted or part of a scanner rule definition
+      if (isAlreadyRedactedOrPlaceholder(matchedText, currentLine)) {
+        continue;
+      }
+
+      // Check if it's a known documentation dummy / mock credential
+      const isMock = isDocumentationOrDummySecret(matchedText, pattern.id, currentLine);
+      if (options?.skipDummyExamples && isMock) {
+        continue;
+      }
 
       // Extract surrounding context snippet (~40 chars around match)
       const startCtx = Math.max(0, matchIndex - 20);
@@ -468,16 +622,28 @@ export function sanitizeContent(
         matchedText,
         redactedText: pattern.placeholder,
         contextSnippet,
-        confidence: pattern.defaultConfidence,
+        confidence: isMock ? 'Low' : pattern.defaultConfidence,
         severity: pattern.severity,
         timestamp: new Date().toISOString(),
+        isMockOrExample: isMock,
       });
     }
 
-    // Surgical replacement preserving surrounding quotes / syntax
+    // Surgical replacement preserving syntax and excluding false positives
     sanitizedContent = sanitizedContent.replace(
       new RegExp(pattern.regex.source, pattern.regex.flags),
-      pattern.placeholder
+      (m) => {
+        if (pattern.id === 'pii-ipv4-v6' && isBenignIpAddress(m)) {
+          return m;
+        }
+        if (isAlreadyRedactedOrPlaceholder(m)) {
+          return m;
+        }
+        if (options?.skipDummyExamples && isDocumentationOrDummySecret(m, pattern.id)) {
+          return m;
+        }
+        return pattern.placeholder;
+      }
     );
   }
 
@@ -492,6 +658,13 @@ export function sanitizeContent(
 
     // If entropy is > 3.8 and not already flagged by regex patterns
     if (entropy > 3.8) {
+      if (
+        isAlreadyRedactedOrPlaceholder(secretCandidate) ||
+        (options?.skipDummyExamples && isDocumentationOrDummySecret(secretCandidate, 'entropy-detector'))
+      ) {
+        continue;
+      }
+
       const isAlreadyFlagged = findings.some(f => f.matchedText.includes(secretCandidate));
       if (!isAlreadyFlagged) {
         const matchIndex = entropyMatch.index;
@@ -512,6 +685,7 @@ export function sanitizeContent(
           confidence: 'Medium',
           severity: 'High',
           timestamp: new Date().toISOString(),
+          isMockOrExample: false,
         });
 
         // Replace only the candidate string literal value
@@ -530,7 +704,12 @@ export function calculateScanStats(
   scannedCount: number,
   skippedBreakdown: SkipBreakdown,
   findings: Finding[],
-  durationSeconds: number
+  durationSeconds: number,
+  extraAudit?: {
+    totalLinesScanned?: number;
+    totalBytesScanned?: number;
+    auditedFiles?: ReadonlyArray<FileScanAuditItem>;
+  }
 ): ScanStats {
   const findingsBySeverity: Record<Severity, number> = {
     Critical: 0,
@@ -555,6 +734,9 @@ export function calculateScanStats(
     durationSeconds: Math.max(0.1, parseFloat(durationSeconds.toFixed(2))),
     findingsBySeverity,
     findingsByCategory,
+    totalLinesScanned: extraAudit?.totalLinesScanned,
+    totalBytesScanned: extraAudit?.totalBytesScanned,
+    auditedFiles: extraAudit?.auditedFiles,
   };
 }
 

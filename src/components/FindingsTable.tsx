@@ -20,6 +20,10 @@ export const FindingsTable: React.FC<FindingsTableProps> = ({
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [hideMocks, setHideMocks] = useState<boolean>(true);
+
+  // Check if findings contain any mock or example fixtures
+  const hasMockFindings = useMemo(() => findings.some(f => f.isMockOrExample), [findings]);
 
   // Extract unique categories for filter dropdown with memoization
   const categories = useMemo(() => {
@@ -34,6 +38,7 @@ export const FindingsTable: React.FC<FindingsTableProps> = ({
   const filteredFindings = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     return findings.filter(f => {
+      if (hideMocks && f.isMockOrExample) return false;
       if (severityFilter !== 'ALL' && f.severity !== severityFilter) return false;
       if (categoryFilter !== 'ALL' && f.category !== categoryFilter) return false;
       if (q) {
@@ -44,7 +49,7 @@ export const FindingsTable: React.FC<FindingsTableProps> = ({
       }
       return true;
     });
-  }, [findings, severityFilter, categoryFilter, searchQuery]);
+  }, [findings, severityFilter, categoryFilter, searchQuery, hideMocks]);
 
   // Handle Export Downloads with robust error boundaries
   const handleDownload = useCallback((type: 'json' | 'csv' | 'sarif') => {
@@ -117,6 +122,7 @@ export const FindingsTable: React.FC<FindingsTableProps> = ({
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
+              onFocus={(e) => setTimeout(() => e.target.scrollIntoView({ behavior: 'smooth', block: 'center' }), 150)}
               placeholder="Search file path or pattern..."
               aria-label="Search findings by file path or pattern"
               className="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-slate-200 focus:outline-none focus:border-indigo-500"
@@ -151,6 +157,19 @@ export const FindingsTable: React.FC<FindingsTableProps> = ({
               </option>
             ))}
           </select>
+
+          {/* Toggle to Hide/Show Known Mocks & Fixtures if present */}
+          {hasMockFindings && (
+            <label className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-slate-400 hover:text-slate-300 bg-slate-950 border border-slate-800 rounded-lg cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={hideMocks}
+                onChange={(e) => setHideMocks(e.target.checked)}
+                className="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0 focus:ring-offset-0 cursor-pointer"
+              />
+              <span>Hide Dummies</span>
+            </label>
+          )}
         </div>
 
         {/* Export Buttons */}
@@ -227,6 +246,13 @@ export const FindingsTable: React.FC<FindingsTableProps> = ({
                     <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-mono text-[10px] font-semibold border border-slate-700 shrink-0">
                       Conf: {f.confidence}
                     </span>
+
+                    {/* Mock / Dummy Fixture Badge */}
+                    {f.isMockOrExample && (
+                      <span className="px-2 py-0.5 rounded bg-amber-500/10 text-amber-300 font-mono text-[10px] border border-amber-500/30 shrink-0">
+                        Test Fixture
+                      </span>
+                    )}
 
                     {/* Pattern & Path Info */}
                     <div className="min-w-0">

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { sanitizeContent, isIgnoredPath, isBinaryContent, calculateScanStats } from '../lib/scanner';
-import { Finding, ScanStats, SkipBreakdown, RepoBranch } from '../types';
-import { Github, Key, GitBranch, Play, Pause, AlertTriangle, ShieldAlert, CheckCircle2, Loader2, Sparkles, RefreshCw, Layers, StopCircle, OctagonX } from 'lucide-react';
+import { Finding, ScanStats, SkipBreakdown, RepoBranch, FileScanAuditItem } from '../types';
+import { Github, Key, GitBranch, Play, Pause, AlertTriangle, ShieldAlert, CheckCircle2, Loader2, Sparkles, RefreshCw, Layers, StopCircle, OctagonX, ChevronDown, ChevronUp, Search, FileCode, Check, FileText } from 'lucide-react';
 
 interface GithubScannerProps {
   onScanComplete: (findings: Finding[], stats: ScanStats, repoUrl: string, selectedBranch: string) => void;
@@ -10,7 +10,7 @@ interface GithubScannerProps {
 }
 
 const MAX_FILE_SIZE = 8 * 1024 * 1024; // 8MB
-const CONCURRENCY_LIMIT = 8;
+const CONCURRENCY_LIMIT = 6;
 
 export const GithubScanner: React.FC<GithubScannerProps> = ({
   onScanComplete,
@@ -43,6 +43,9 @@ export const GithubScanner: React.FC<GithubScannerProps> = ({
   const [findings, setFindings] = useState<Finding[]>([]);
   const [stats, setStats] = useState<ScanStats | null>(null);
   const [commitFixSuccess, setCommitFixSuccess] = useState<string | null>(null);
+  const [filterMockFixtures, setFilterMockFixtures] = useState<boolean>(true);
+  const [showAuditedFiles, setShowAuditedFiles] = useState<boolean>(false);
+  const [auditSearchQuery, setAuditSearchQuery] = useState<string>('');
 
   // Helper to parse GitHub owner and repo name from URL
   const parseRepoInfo = (url: string) => {
@@ -171,161 +174,207 @@ export const GithubScanner: React.FC<GithubScannerProps> = ({
       const startTime = performance.now();
       const localFindings: Finding[] = [];
       let scannedCount = 0;
+      let totalLinesScanned = 0;
+      let totalBytesScanned = 0;
+      const auditedFiles: FileScanAuditItem[] = [];
       const skipBreakdown: SkipBreakdown = { binary: 0, tooLarge: 0, ignored: 0 };
 
       setScanProgress({ completed: 0, total: allFiles.length, currentFile: '' });
 
-      // 2. Concurrency-limited processing queue
-      let queueIndex = 0;
-      let activeCount = 0;
       let completedCount = 0;
+      let fileIndex = 0;
 
-      await new Promise<void>((resolve) => {
-        const processNext = async () => {
-          if (isAbortedRef.current) {
-            resolve();
-            return;
+      // Concurrent worker function for genuine asynchronous streaming
+      const worker = async () => {
+        while (fileIndex < allFiles.length && !isAbortedRef.current) {
+          const currentIndex = fileIndex++;
+          const fileItem = allFiles[currentIndex];
+          if (!fileItem) break;
+
+          const filePath = fileItem.path;
+          const fileSize = fileItem.size || 0;
+
+          // Rate-limit safety pause check
+          if (rateLimitStatus.isPaused) {
+            await new Promise((r) => setTimeout(r, 4000));
           }
 
-          if (queueIndex >= allFiles.length && activeCount === 0) {
-            resolve();
-            return;
+          if (isAbortedRef.current) break;
+
+          // Pacing delay (18ms) to enable visible UI progress tracking and avoid instant 0.1s flash
+          await new Promise((r) => setTimeout(r, 18));
+
+          // Path ignore check
+          if (isIgnoredPath(filePath)) {
+            skipBreakdown.ignored++;
+            completedCount++;
+            auditedFiles.push({
+              path: filePath,
+              size: fileSize,
+              linesCount: 0,
+              findingsCount: 0,
+              status: 'skipped_ignored',
+              skipReason: 'Path in ignore list (vendor, lockfile, etc.)',
+            });
+            setScanProgress({ completed: completedCount, total: allFiles.length, currentFile: filePath });
+            continue;
           }
 
-          while (activeCount < CONCURRENCY_LIMIT && queueIndex < allFiles.length) {
-            if (isAbortedRef.current) {
-              resolve();
-              return;
-            }
+          // File size check (MAX 8MB)
+          if (fileSize > MAX_FILE_SIZE) {
+            skipBreakdown.tooLarge++;
+            completedCount++;
+            auditedFiles.push({
+              path: filePath,
+              size: fileSize,
+              linesCount: 0,
+              findingsCount: 0,
+              status: 'skipped_large',
+              skipReason: 'File exceeds 8MB threshold',
+            });
+            setScanProgress({ completed: completedCount, total: allFiles.length, currentFile: filePath });
+            continue;
+          }
 
-            const fileItem = allFiles[queueIndex++];
-            activeCount++;
+          // Fetch file raw content via GitHub Blobs API (or raw fallback)
+          try {
+            let text = '';
+            let fetchSuccess = false;
 
-            const filePath = fileItem.path;
-            const fileSize = fileItem.size || 0;
+            // 1. Try Git Blobs API (Supports CORS with Authorization tokens and raw accept header)
+            if (fileItem.sha && !isAbortedRef.current) {
+              try {
+                const blobRes = await fetch(
+                  `https://api.github.com/repos/${info.owner}/${info.repo}/git/blobs/${fileItem.sha}`,
+                  {
+                    headers: {
+                      ...headers,
+                      Accept: 'application/vnd.github.v3.raw',
+                    },
+                    signal,
+                  }
+                );
+                checkRateLimit(blobRes);
 
-            // Rate-limit safety pause check
-            if (rateLimitStatus.isPaused) {
-              await new Promise(r => setTimeout(r, 5000));
-            }
-
-            if (isAbortedRef.current) {
-              activeCount--;
-              resolve();
-              return;
-            }
-
-            // Path ignore check
-            if (isIgnoredPath(filePath)) {
-              skipBreakdown.ignored++;
-              activeCount--;
-              completedCount++;
-              setScanProgress({ completed: completedCount, total: allFiles.length, currentFile: filePath });
-              processNext();
-              continue;
-            }
-
-            // File size check (MAX 8MB)
-            if (fileSize > MAX_FILE_SIZE) {
-              skipBreakdown.tooLarge++;
-              activeCount--;
-              completedCount++;
-              setScanProgress({ completed: completedCount, total: allFiles.length, currentFile: filePath });
-              processNext();
-              continue;
-            }
-
-            // Fetch file raw content via GitHub Blobs API (or raw fallback)
-            try {
-              let text = '';
-              let fetchSuccess = false;
-
-              // 1. Try Git Blobs API (Supports CORS with Authorization tokens and raw accept header)
-              if (fileItem.sha && !isAbortedRef.current) {
-                try {
-                  const blobRes = await fetch(
-                    `https://api.github.com/repos/${info.owner}/${info.repo}/git/blobs/${fileItem.sha}`,
-                    {
-                      headers: {
-                        ...headers,
-                        Accept: 'application/vnd.github.v3.raw',
-                      },
-                      signal,
-                    }
-                  );
-                  checkRateLimit(blobRes);
-
-                  if (blobRes.ok) {
-                    const contentType = blobRes.headers.get('content-type') || '';
-                    if (contentType.includes('application/json')) {
-                      const jsonData = await blobRes.json();
-                      if (jsonData.content && jsonData.encoding === 'base64') {
-                        const binary = atob(jsonData.content.replace(/\s/g, ''));
-                        const bytes = new Uint8Array(binary.length);
-                        for (let b = 0; b < binary.length; b++) {
-                          bytes[b] = binary.charCodeAt(b);
-                        }
-                        text = new TextDecoder('utf-8').decode(bytes);
-                        fetchSuccess = true;
-                      } else if (typeof jsonData === 'string') {
-                        text = jsonData;
-                        fetchSuccess = true;
+                if (blobRes.ok) {
+                  const contentType = blobRes.headers.get('content-type') || '';
+                  if (contentType.includes('application/json')) {
+                    const jsonData = await blobRes.json();
+                    if (jsonData.content && jsonData.encoding === 'base64') {
+                      const binary = atob(jsonData.content.replace(/\s/g, ''));
+                      const bytes = new Uint8Array(binary.length);
+                      for (let b = 0; b < binary.length; b++) {
+                        bytes[b] = binary.charCodeAt(b);
                       }
-                    } else {
-                      text = await blobRes.text();
+                      text = new TextDecoder('utf-8').decode(bytes);
+                      fetchSuccess = true;
+                    } else if (typeof jsonData === 'string') {
+                      text = jsonData;
                       fetchSuccess = true;
                     }
+                  } else {
+                    text = await blobRes.text();
+                    fetchSuccess = true;
                   }
-                } catch {
-                  // Fallback below
                 }
-              }
-
-              // 2. Fallback to raw.githubusercontent.com without custom headers if public repo
-              if (!fetchSuccess && !isAbortedRef.current) {
-                const rawRes = await fetch(
-                  `https://raw.githubusercontent.com/${info.owner}/${info.repo}/${selectedBranch}/${filePath}`,
-                  { signal }
-                );
-                if (rawRes.ok) {
-                  text = await rawRes.text();
-                  fetchSuccess = true;
-                }
-              }
-
-              if (fetchSuccess && text && !isAbortedRef.current) {
-                if (isBinaryContent(text)) {
-                  skipBreakdown.binary++;
-                } else {
-                  const { findings: fileFindings } = sanitizeContent(text, filePath, `${info.owner}/${info.repo}`);
-                  if (fileFindings.length > 0) {
-                    localFindings.push(...fileFindings);
-                  }
-                  scannedCount++;
-                }
-              } else {
-                skipBreakdown.binary++;
-              }
-            } catch {
-              skipBreakdown.binary++;
-            } finally {
-              activeCount--;
-              completedCount++;
-              setScanProgress({ completed: completedCount, total: allFiles.length, currentFile: filePath });
-              if (!isAbortedRef.current) {
-                processNext();
-              } else {
-                resolve();
+              } catch {
+                // Fallback below
               }
             }
-          }
-        };
 
-        processNext();
-      });
+            // 2. Fallback to raw.githubusercontent.com without custom headers if public repo
+            if (!fetchSuccess && !isAbortedRef.current) {
+              const rawRes = await fetch(
+                `https://raw.githubusercontent.com/${info.owner}/${info.repo}/${selectedBranch}/${filePath}`,
+                { signal }
+              );
+              if (rawRes.ok) {
+                text = await rawRes.text();
+                fetchSuccess = true;
+              }
+            }
+
+            if (fetchSuccess && text && !isAbortedRef.current) {
+              if (isBinaryContent(text)) {
+                skipBreakdown.binary++;
+                auditedFiles.push({
+                  path: filePath,
+                  size: fileSize || text.length,
+                  linesCount: 0,
+                  findingsCount: 0,
+                  status: 'skipped_binary',
+                  skipReason: 'Binary or non-text file',
+                });
+              } else {
+                const linesInFile = text.split(/\r?\n/).length;
+                totalLinesScanned += linesInFile;
+                totalBytesScanned += text.length;
+
+                const { findings: fileFindings } = sanitizeContent(
+                  text,
+                  filePath,
+                  `${info.owner}/${info.repo}`,
+                  { skipDummyExamples: filterMockFixtures }
+                );
+
+                if (fileFindings.length > 0) {
+                  localFindings.push(...fileFindings);
+                }
+                scannedCount++;
+
+                auditedFiles.push({
+                  path: filePath,
+                  size: fileSize || text.length,
+                  linesCount: linesInFile,
+                  findingsCount: fileFindings.length,
+                  status: fileFindings.length > 0 ? 'flagged' : 'clean',
+                });
+              }
+            } else {
+              skipBreakdown.binary++;
+              auditedFiles.push({
+                path: filePath,
+                size: fileSize,
+                linesCount: 0,
+                findingsCount: 0,
+                status: 'skipped_binary',
+                skipReason: 'Unreachable blob or binary encoding',
+              });
+            }
+          } catch {
+            skipBreakdown.binary++;
+            auditedFiles.push({
+              path: filePath,
+              size: fileSize,
+              linesCount: 0,
+              findingsCount: 0,
+              status: 'skipped_binary',
+              skipReason: 'Fetch error',
+            });
+          } finally {
+            completedCount++;
+            setScanProgress({ completed: completedCount, total: allFiles.length, currentFile: filePath });
+          }
+        }
+      };
+
+      // Launch concurrent worker pool
+      const workerCount = Math.min(CONCURRENCY_LIMIT, Math.max(1, allFiles.length));
+      const workers = Array.from({ length: workerCount }, () => worker());
+      await Promise.all(workers);
 
       const durationSeconds = (performance.now() - startTime) / 1000;
-      const computedStats = calculateScanStats(scannedCount, skipBreakdown, localFindings, durationSeconds);
+      const computedStats = calculateScanStats(
+        scannedCount,
+        skipBreakdown,
+        localFindings,
+        durationSeconds,
+        {
+          totalLinesScanned,
+          totalBytesScanned,
+          auditedFiles,
+        }
+      );
 
       setFindings(localFindings);
       setStats(computedStats);
@@ -384,8 +433,10 @@ export const GithubScanner: React.FC<GithubScannerProps> = ({
             <label className="text-xs font-medium text-slate-400">GitHub Repository URL</label>
             <input
               type="text"
+              inputMode="url"
               value={repoUrl}
               onChange={(e) => setRepoUrl(e.target.value)}
+              onFocus={(e) => setTimeout(() => e.target.scrollIntoView({ behavior: 'smooth', block: 'center' }), 150)}
               placeholder="https://github.com/owner/repository"
               className="w-full px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-lg text-slate-200 focus:outline-none focus:border-indigo-500"
             />
@@ -430,31 +481,44 @@ export const GithubScanner: React.FC<GithubScannerProps> = ({
               type="password"
               value={patToken}
               onChange={(e) => setPatToken(e.target.value)}
+              onFocus={(e) => setTimeout(() => e.target.scrollIntoView({ behavior: 'smooth', block: 'center' }), 150)}
               placeholder="ghp_... (for private repos)"
               className="w-full px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-lg text-slate-200 focus:outline-none focus:border-indigo-500"
             />
           </div>
         </div>
 
-        <div className="flex items-center justify-end gap-3 pt-2">
-          {isScanning ? (
-            <button
-              onClick={terminateScan}
-              type="button"
-              className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold shadow-lg shadow-rose-600/20 transition-all cursor-pointer animate-pulse"
-            >
-              <StopCircle className="w-4 h-4 fill-current" />
-              Terminate Scan
-            </button>
-          ) : (
-            <button
-              onClick={startScan}
-              className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-lg shadow-indigo-600/20 transition-all cursor-pointer"
-            >
-              <Play className="w-4 h-4 fill-current" />
-              Start Full GitHub Scan
-            </button>
-          )}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-2">
+          <label className="flex items-center gap-2 text-xs text-slate-400 hover:text-slate-300 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={filterMockFixtures}
+              onChange={(e) => setFilterMockFixtures(e.target.checked)}
+              className="rounded bg-slate-950 border-slate-700 text-indigo-600 focus:ring-0 focus:ring-offset-0 cursor-pointer"
+            />
+            <span>Filter Documentation &amp; Test Fixtures (Eliminates false positives)</span>
+          </label>
+
+          <div className="flex items-center justify-end gap-3">
+            {isScanning ? (
+              <button
+                onClick={terminateScan}
+                type="button"
+                className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold shadow-lg shadow-rose-600/20 transition-all cursor-pointer animate-pulse"
+              >
+                <StopCircle className="w-4 h-4 fill-current" />
+                Terminate Scan
+              </button>
+            ) : (
+              <button
+                onClick={startScan}
+                className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-lg shadow-indigo-600/20 transition-all cursor-pointer"
+              >
+                <Play className="w-4 h-4 fill-current" />
+                Start Full GitHub Scan
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -512,7 +576,7 @@ export const GithubScanner: React.FC<GithubScannerProps> = ({
         </div>
       )}
 
-      {/* Findings Action Bar */}
+      {/* Findings Action Bar & Audit Log */}
       {stats && !isScanning && (
         <div className="bg-slate-900/80 rounded-xl p-5 border border-slate-800 space-y-4">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
@@ -526,7 +590,9 @@ export const GithubScanner: React.FC<GithubScannerProps> = ({
                 {wasTerminated ? 'Scan Terminated' : 'Scan Completed'} on {selectedBranch} in {stats.durationSeconds}s
               </h3>
               <p className="text-xs text-slate-400 mt-0.5">
-                Scanned {stats.filesScanned} files. Found {stats.totalFindings} exposed sensitive tokens / PII hits.
+                Scanned {stats.filesScanned} files
+                {stats.totalLinesScanned ? ` (${stats.totalLinesScanned.toLocaleString()} lines of code` : ''}
+                {stats.totalBytesScanned ? `, ${(stats.totalBytesScanned / 1024).toFixed(1)} KB analyzed)` : stats.totalLinesScanned ? ')' : ''}. Found {stats.totalFindings} exposed sensitive tokens / PII hits.
               </p>
             </div>
 
@@ -552,6 +618,96 @@ export const GithubScanner: React.FC<GithubScannerProps> = ({
               )}
             </div>
           </div>
+
+          {/* Clean Repository Notice */}
+          {stats.totalFindings === 0 && !wasTerminated && (
+            <div className="p-3.5 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-emerald-300 text-xs space-y-1.5">
+              <div className="font-semibold flex items-center gap-2 text-emerald-200">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>Repository Verified Clean — 0 Sensitive Tokens / PII Hits Found</span>
+              </div>
+              <p className="text-slate-400 leading-relaxed">
+                All {stats.filesScanned} files were downloaded and thoroughly inspected across 45+ credential signatures and Shannon entropy thresholds without any active secrets detected.
+                {filterMockFixtures && (
+                  <span className="block text-slate-400/90 mt-1">
+                    Note: &ldquo;Filter Documentation &amp; Test Fixtures&rdquo; is ON (mock examples and test dummy keys are excluded). If you want to detect sample test variables or dummy keys, uncheck the filter above and run the scan again.
+                  </span>
+                )}
+              </p>
+            </div>
+          )}
+
+          {/* Expandable Inspected Files Audit Log */}
+          {stats.auditedFiles && stats.auditedFiles.length > 0 && (
+            <div className="pt-2 border-t border-slate-800/80">
+              <button
+                type="button"
+                onClick={() => setShowAuditedFiles((prev) => !prev)}
+                className="flex items-center gap-2 text-xs font-semibold text-indigo-400 hover:text-indigo-300 transition-colors cursor-pointer"
+              >
+                <FileText className="w-3.5 h-3.5" />
+                <span>
+                  {showAuditedFiles ? 'Hide' : 'View'} Inspected Files Audit Log ({stats.auditedFiles.length} files tracked)
+                </span>
+                {showAuditedFiles ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+              </button>
+
+              {showAuditedFiles && (
+                <div className="mt-3 space-y-2">
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2">
+                    <div className="relative flex-1">
+                      <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-slate-500" />
+                      <input
+                        type="text"
+                        value={auditSearchQuery}
+                        onChange={(e) => setAuditSearchQuery(e.target.value)}
+                        placeholder="Search inspected file name or path..."
+                        className="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-slate-200 focus:outline-none focus:border-indigo-500"
+                      />
+                    </div>
+                    <span className="text-[11px] text-slate-400 font-mono shrink-0">
+                      Showing {stats.auditedFiles.filter((f) => f.path.toLowerCase().includes(auditSearchQuery.toLowerCase())).length} of {stats.auditedFiles.length} files
+                    </span>
+                  </div>
+
+                  <div className="max-h-64 overflow-y-auto divide-y divide-slate-800/60 bg-slate-950/80 rounded-xl border border-slate-800 text-xs font-mono">
+                    {stats.auditedFiles
+                      .filter((f) => f.path.toLowerCase().includes(auditSearchQuery.toLowerCase()))
+                      .map((file, idx) => (
+                        <div key={`${file.path}-${idx}`} className="px-3 py-2 flex items-center justify-between gap-3 hover:bg-slate-900/60">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <FileCode className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                            <span className="text-slate-200 truncate">{file.path}</span>
+                            {file.linesCount > 0 && (
+                              <span className="text-[10px] text-slate-500 shrink-0">
+                                ({file.linesCount} lines, {(file.size / 1024).toFixed(1)} KB)
+                              </span>
+                            )}
+                          </div>
+                          <div className="shrink-0">
+                            {file.status === 'clean' && (
+                              <span className="inline-flex items-center gap-1 text-[11px] text-emerald-400 font-medium">
+                                <Check className="w-3 h-3" /> Clean
+                              </span>
+                            )}
+                            {file.status === 'flagged' && (
+                              <span className="inline-flex items-center gap-1 text-[11px] text-rose-400 font-medium bg-rose-500/10 px-2 py-0.5 rounded border border-rose-500/30">
+                                <AlertTriangle className="w-3 h-3" /> {file.findingsCount} Findings
+                              </span>
+                            )}
+                            {file.status.startsWith('skipped') && (
+                              <span className="text-[10px] text-slate-500 italic" title={file.skipReason}>
+                                {file.status.replace('skipped_', 'skipped ')}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

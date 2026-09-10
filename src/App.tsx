@@ -65,8 +65,8 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#0d0f17] text-slate-100 flex flex-col font-sans selection:bg-indigo-500/30 selection:text-indigo-200">
-      {/* Top Navigation Bar */}
-      <header className="border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md sticky top-0 z-40">
+      {/* Top Navigation Bar - relative on mobile to prevent obscuring screen when virtual keyboard opens */}
+      <header className="border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md relative sm:sticky sm:top-0 z-40">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 min-h-16 flex flex-col md:flex-row items-center justify-between gap-3 md:gap-4">
           <div className="flex items-center gap-3 w-full md:w-auto justify-start">
             <div className="p-2 bg-gradient-to-tr from-indigo-600 to-purple-600 rounded-xl shadow-lg shadow-indigo-600/30 text-white shrink-0">
@@ -141,7 +141,7 @@ export default function App() {
       </header>
 
       {/* Main Content Workspace */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 w-full space-y-8">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 flex-1 w-full space-y-6 sm:space-y-8 pb-32 sm:pb-16">
         {activeTab === 'github' && (
           <GithubScanner
             onScanComplete={handleScanComplete}
